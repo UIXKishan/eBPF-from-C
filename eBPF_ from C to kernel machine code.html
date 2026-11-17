@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eBPF: from C to kernel machine code</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,700;12..96,800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0E1626; --deck:#15213A; --deck2:#1A2847; --line:#26375C; --line2:#34497A;
+  --text:#E6E9F2; --mute:#8C97B2; --dim:#5D6A8A;
+  --honey:#F2B33D; --cyan:#5CD6E0; --violet:#B79CFF; --ok:#6FD69A; --bad:#FF7A7A; --rose:#F58FC0; --orange:#FF9F5A;
+  --gA:var(--cyan); --gB:var(--honey); --gC:var(--violet); --gD:var(--ok); --gE:var(--rose); --gM:var(--orange); --gP:#8C97B2;
+  --sans:"Bricolage Grotesque",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  --r-lg:18px; --r-md:10px; --r-sm:6px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{animation:none!important;transition:none!important}}
+body{background:var(--ink);color:var(--text);font-family:var(--sans);font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased}
+a{color:var(--honey)}
+:focus-visible{outline:2px solid var(--honey);outline-offset:3px;border-radius:4px}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0}
+code,.mono{font-family:var(--mono)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+
+/* nav */
+nav.top{position:sticky;top:0;z-index:50;background:rgba(14,22,38,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:28px;height:58px}
+.brand{font-weight:800;font-size:19px;letter-spacing:-.02em;display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+.brand svg{width:22px;height:22px}
+nav.top .links{display:flex;gap:4px;margin-left:auto;overflow-x:auto;scrollbar-width:none}
+nav.top .links a{color:var(--mute);text-decoration:none;font-size:14.5px;padding:7px 11px;border-radius:999px;white-space:nowrap}
+nav.top .links a:hover,nav.top .links a.on{color:var(--text);background:var(--deck)}
+
+/* hero */
+.hero{position:relative;padding:84px 0 72px;overflow:hidden;border-bottom:1px solid var(--line)}
+.hero .comb{position:absolute;inset:0;opacity:.22;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 0l28 16v32L28 64 0 48V16zM28 64v33' fill='none' stroke='%2334497A' stroke-width='1'/%3E%3C/svg%3E");
+  mask-image:radial-gradient(ellipse at 75% 40%,#000 0%,transparent 65%);-webkit-mask-image:radial-gradient(ellipse at 75% 40%,#000 0%,transparent 65%)}
+.hero .wrap{position:relative;display:grid;grid-template-columns:1.02fr 1fr;gap:56px;align-items:center}
+.hero h1{font-size:clamp(46px,6.4vw,86px);line-height:.95;letter-spacing:-.045em;font-weight:800}
+.hero h1 .thin{display:block;font-weight:300;letter-spacing:-.03em;color:var(--mute);font-size:.5em;line-height:1.1;margin-top:14px}
+.hero p.lede{margin-top:26px;font-size:20px;line-height:1.5;color:#C5CCDD;max-width:34ch}
+.cta{display:flex;gap:12px;margin-top:32px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;border-radius:999px;font-weight:600;font-size:15.5px;text-decoration:none;border:1px solid var(--line2);color:var(--text);background:var(--deck)}
+.btn.primary{background:var(--honey);color:#1B1405;border-color:var(--honey)}
+.btn:hover{filter:brightness(1.08)}
+
+/* descent panel */
+.descent{background:linear-gradient(180deg,var(--deck),#121C33);border:1px solid var(--line);border-radius:var(--r-lg);padding:22px;box-shadow:0 30px 80px -30px rgba(0,0,0,.7)}
+.descent .layer{position:relative;padding:14px 16px 14px 18px;border-radius:var(--r-md);background:rgba(14,22,38,.55);border:1px solid var(--line);transition:border-color .4s,background .4s}
+.descent .layer + .layer{margin-top:34px}
+.descent .layer.lit{border-color:var(--honey);background:rgba(242,179,61,.07)}
+.descent .layer .who{font-size:13px;color:var(--mute);display:flex;justify-content:space-between}
+.descent .layer .who b{color:var(--text);font-weight:600}
+.descent .layer .code{font-family:var(--mono);font-size:14.5px;margin-top:6px;min-height:22px;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.descent .arrow{position:absolute;left:34px;bottom:-30px;height:26px;width:2px;background:var(--line2)}
+.descent .arrow::after{content:"";position:absolute;left:-4px;bottom:-2px;border:5px solid transparent;border-top-color:var(--line2)}
+.descent .arrow span{position:absolute;left:14px;top:4px;font-size:12px;color:var(--dim);white-space:nowrap;font-family:var(--mono)}
+.descent .layer.lit .arrow{background:var(--honey)}
+.descent .layer.lit .arrow::after{border-top-color:var(--honey)}
+.descent .ring{display:flex;justify-content:space-between;margin:18px 2px 0;font-size:12.5px;color:var(--dim)}
+.boundary{position:relative;margin:30px 0 -16px;height:0;border-top:1px dashed var(--violet);opacity:.7}
+.boundary span{position:absolute;right:0;top:-10px;background:#131D35;padding:0 8px;font-size:12px;color:var(--violet)}
+
+/* sections */
+section.s{padding:96px 0;border-bottom:1px solid var(--line)}
+.shead{display:grid;grid-template-columns:72px 1fr;gap:8px 20px;margin-bottom:40px;max-width:860px}
+.shead .num{font-family:var(--mono);font-size:15px;color:var(--honey);padding-top:12px}
+.shead h2{font-size:clamp(32px,4vw,48px);line-height:1.05;letter-spacing:-.035em;font-weight:700}
+.shead p{grid-column:2;color:#B9C1D6;font-size:18px;max-width:64ch}
+.panel{background:var(--deck);border:1px solid var(--line);border-radius:var(--r-lg)}
+
+/* code */
+.codebox{font-family:var(--mono);font-size:13.5px;line-height:1.75;overflow:auto}
+.codebox .ln{display:flex;padding:0 14px 0 0;border-left:3px solid transparent;cursor:default;transition:background .15s}
+.codebox .ln .no{width:44px;flex:none;text-align:right;padding-right:14px;color:var(--dim);user-select:none}
+.codebox .ln .tx{white-space:pre}
+.codebox .ln .cm{color:var(--dim)}
+.codebox .ln[data-g]{cursor:pointer}
+.codebox .ln.hl{background:rgba(255,255,255,.055)}
+.k{color:var(--violet)}.t{color:var(--cyan)}.st{color:#F7D58A}.n{color:var(--orange)}.f{color:#9BD3FF}.c{color:var(--dim)}.r{color:var(--cyan)}.m{color:var(--honey)}.p{color:var(--rose)}
+
+/* pipeline */
+.track{display:grid;grid-template-columns:repeat(9,1fr);gap:0;position:relative;margin-bottom:26px}
+.track::before{content:"";position:absolute;left:5%;right:5%;top:21px;height:2px;background:var(--line)}
+.track .fill{position:absolute;left:5%;top:21px;height:2px;background:var(--honey);transition:width .5s}
+.stage{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;padding:0 4px;text-align:center}
+.stage .dot{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--ink);border:2px solid var(--line2);font-family:var(--mono);font-size:14px;color:var(--mute);transition:all .25s;z-index:1}
+.stage .lab{font-size:13.5px;line-height:1.25;color:var(--mute)}
+.stage .where{font-size:11.5px;color:var(--dim)}
+.stage.done .dot{border-color:var(--honey);color:var(--honey)}
+.stage.on .dot{background:var(--honey);border-color:var(--honey);color:#1B1405;transform:scale(1.08)}
+.stage.on .lab{color:var(--text)}
+.stage[data-space=kernel] .where{color:var(--cyan)}
+.stage[data-space=user] .where{color:var(--violet)}
+.pdetail{display:grid;grid-template-columns:1fr 1.15fr;gap:0;overflow:hidden}
+.pdetail .txt{padding:32px 34px}
+.pdetail .txt h3{font-size:28px;letter-spacing:-.025em;line-height:1.1;font-weight:700}
+.pdetail .txt .sub{color:var(--mute);margin-top:6px;font-size:15px}
+.pdetail .txt p{margin-top:16px;color:#C9D0E0;max-width:52ch}
+.pdetail .txt ul{margin:14px 0 0 18px;color:#C9D0E0}
+.pdetail .txt li{margin-top:6px}
+.pdetail .txt li::marker{color:var(--honey)}
+.pdetail .term{background:#0B1220;border-left:1px solid var(--line);padding:20px 0;min-height:360px}
+.pdetail .term .bar{padding:0 18px 12px;font-family:var(--mono);font-size:12.5px;color:var(--dim);border-bottom:1px solid var(--line);margin-bottom:12px}
+.pctl{display:flex;gap:10px;padding:18px 34px 26px}
+.chip{padding:8px 14px;border-radius:999px;border:1px solid var(--line2);font-size:14px;background:var(--deck2)}
+.chip:hover{border-color:var(--honey)}
+.chip.on{background:var(--honey);color:#1B1405;border-color:var(--honey)}
+
+/* rosetta */
+.rosetta{display:grid;grid-template-columns:1fr 1fr 1fr;overflow:hidden}
+.rosetta .col{border-right:1px solid var(--line);min-width:0}
+.rosetta .col:last-child{border-right:0}
+.rosetta .ch{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:66px}
+.rosetta .ch h4{font-size:16px;font-weight:600}
+.rosetta .ch small{display:block;color:var(--dim);font-size:12.5px;font-weight:400}
+.rosetta .codebox{padding:12px 0;max-height:640px}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:999px;padding:2px;flex:none}
+.seg button{font-size:12.5px;padding:5px 10px;border-radius:999px;color:var(--mute)}
+.seg button.on{background:var(--deck2);color:var(--text)}
+.explain{margin-top:18px;padding:22px 26px;display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:start}
+.explain .sw{width:14px;height:14px;border-radius:4px;margin-top:6px;background:var(--dim)}
+.explain h4{font-size:19px;font-weight:600}
+.explain p{color:#C3CADB;margin-top:4px;max-width:90ch}
+.legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.legend button{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--mute);padding:5px 11px;border:1px solid var(--line);border-radius:999px}
+.legend button i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.legend button:hover,.legend button.on{color:var(--text);border-color:var(--line2)}
+
+/* decoder */
+.dec{display:grid;grid-template-columns:330px 1fr;overflow:hidden}
+.dec .list{border-right:1px solid var(--line);padding:10px 0;max-height:560px;overflow:auto}
+.dec .list button{display:flex;width:100%;text-align:left;gap:12px;padding:8px 18px;font-family:var(--mono);font-size:13px;color:#C9D0E0;border-left:3px solid transparent}
+.dec .list button .i{color:var(--dim);width:22px;text-align:right}
+.dec .list button:hover{background:rgba(255,255,255,.04)}
+.dec .list button.on{background:rgba(242,179,61,.09);border-left-color:var(--honey);color:var(--text)}
+.dec .view{padding:30px 34px}
+.dec .asm{font-family:var(--mono);font-size:22px;letter-spacing:-.01em}
+.bytes{display:flex;gap:6px;margin-top:22px;flex-wrap:wrap}
+.byte{width:58px;text-align:center;border-radius:var(--r-sm);padding:10px 0 8px;font-family:var(--mono);font-size:18px;border:1px solid var(--line2);background:var(--ink);transition:transform .15s}
+.byte small{display:block;font-size:10.5px;color:var(--dim);margin-top:2px;font-family:var(--sans)}
+.byte.op{border-color:var(--honey);color:var(--honey)}
+.byte.rg{border-color:var(--violet);color:var(--violet)}
+.byte.of{border-color:var(--cyan);color:var(--cyan)}
+.byte.im{border-color:var(--ok);color:var(--ok)}
+.bits{margin-top:26px;display:flex;gap:3px;align-items:flex-end}
+.bits .grp{display:flex;flex-direction:column;align-items:center;gap:6px}
+.bits .grp .bb{display:flex;gap:3px}
+.bits .grp .bb span{width:30px;height:38px;display:grid;place-items:center;font-family:var(--mono);font-size:16px;background:var(--ink);border:1px solid var(--line2);border-radius:4px}
+.bits .grp em{font-style:normal;font-size:12.5px;color:var(--mute);text-align:center;line-height:1.25}
+.bits .grp.g1 .bb span{border-color:var(--honey);color:var(--honey)}
+.bits .grp.g2 .bb span{border-color:var(--rose);color:var(--rose)}
+.bits .grp.g3 .bb span{border-color:var(--cyan);color:var(--cyan)}
+.fields{margin-top:26px;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.fields div{background:var(--ink);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px}
+.fields div span{display:block;font-size:12.5px;color:var(--dim)}
+.fields div b{font-family:var(--mono);font-weight:500;font-size:15px}
+.dec .note{margin-top:20px;color:#BAC2D6;font-size:15.5px;max-width:70ch}
+
+/* verifier */
+.vtabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.ver{display:grid;grid-template-columns:300px 1fr 1fr;overflow:hidden}
+.ver > div{min-width:0}
+.ver .insns{border-right:1px solid var(--line);padding:12px 0}
+.ver .insns .ln{display:flex;gap:10px;font-family:var(--mono);font-size:13px;padding:5px 16px;border-left:3px solid transparent;color:#C9D0E0}
+.ver .insns .ln .i{color:var(--dim);width:20px;text-align:right}
+.ver .insns .ln.cur{background:rgba(242,179,61,.1);border-left-color:var(--honey);color:var(--text)}
+.ver .insns .ln.err{background:rgba(255,122,122,.12);border-left-color:var(--bad)}
+.ver .insns .ln.seen{color:var(--mute)}
+.ver .regs{padding:16px 18px;border-right:1px solid var(--line)}
+.ver h5{font-size:13.5px;color:var(--mute);font-weight:500;margin-bottom:10px}
+.rgrid{display:grid;grid-template-columns:44px 1fr;gap:5px 10px;font-family:var(--mono);font-size:13px}
+.rgrid .rn{color:var(--dim);padding:5px 0}
+.rgrid .rv{padding:5px 9px;border-radius:5px;background:var(--ink);border:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .3s,background .3s}
+.rv.chg{border-color:var(--honey);background:rgba(242,179,61,.08)}
+.rv.ty-ctx{color:var(--violet)}.rv.ty-scalar{color:var(--cyan)}.rv.ty-fp{color:var(--honey)}.rv.ty-map{color:var(--orange)}.rv.ty-null{color:var(--bad)}.rv.ty-val{color:var(--ok)}.rv.ty-none{color:var(--dim)}
+.ver .logp{padding:16px 0 0;display:flex;flex-direction:column;background:#0B1220}
+.ver .logp h5{padding:0 18px}
+.vlog{font-family:var(--mono);font-size:12.5px;line-height:1.7;padding:0 18px 16px;overflow:auto;max-height:330px;flex:1;white-space:pre-wrap;word-break:break-word}
+.vlog .e{color:var(--bad)}.vlog .g{color:var(--ok)}.vlog .y{color:var(--honey)}
+.vfoot{display:flex;align-items:center;gap:14px;padding:16px 20px;border-top:1px solid var(--line);flex-wrap:wrap}
+.vfoot .say{flex:1;min-width:260px;color:#C9D0E0;font-size:15.5px}
+.badge{font-family:var(--mono);font-size:12.5px;padding:5px 11px;border-radius:999px;border:1px solid var(--line2);color:var(--mute)}
+.badge.ok{color:var(--ok);border-color:var(--ok)}
+.badge.bad{color:var(--bad);border-color:var(--bad)}
+.badge.run{color:var(--honey);border-color:var(--honey)}
+.ctrl{display:flex;gap:8px}
+.ctrl button{padding:8px 14px;border-radius:999px;border:1px solid var(--line2);background:var(--deck2);font-size:14px}
+.ctrl button:hover{border-color:var(--honey)}
+.ctrl button:disabled{opacity:.4;cursor:default}
+
+/* jit regmap */
+.regmap{display:grid;grid-template-columns:1.1fr 1fr;gap:24px}
+.rmtable{padding:10px 0}
+.rmrow{display:grid;grid-template-columns:64px 30px 70px 1fr;align-items:center;padding:9px 22px;font-family:var(--mono);font-size:14.5px;border-bottom:1px solid var(--line)}
+.rmrow:last-child{border-bottom:0}
+.rmrow .b{color:var(--honey)}.rmrow .x{color:var(--cyan)}.rmrow .w{font-family:var(--sans);font-size:14px;color:var(--mute)}
+.rmrow .ar{color:var(--dim)}
+.facts{padding:28px 30px}
+.facts h4{font-size:20px;font-weight:600;letter-spacing:-.015em}
+.facts p{color:#C3CADB;margin-top:10px}
+.facts dl{margin-top:18px;display:grid;grid-template-columns:auto 1fr;gap:10px 18px}
+.facts dt{font-family:var(--mono);font-size:13.5px;color:var(--honey);padding-top:2px}
+.facts dd{color:#C3CADB;font-size:15.5px}
+
+/* hooks */
+.hooks{display:grid;grid-template-columns:1.25fr 1fr;gap:24px;align-items:start}
+.stack{padding:14px}
+.lyr{display:grid;grid-template-columns:170px 1fr;align-items:center;gap:14px;padding:12px 14px;border-radius:var(--r-md);margin-top:6px;background:var(--ink);border:1px solid var(--line)}
+.lyr:first-child{margin-top:0}
+.lyr .ln2{font-size:14.5px;font-weight:500}
+.lyr .ln2 small{display:block;font-size:12px;color:var(--dim);font-weight:400}
+.lyr.user{border-color:rgba(183,156,255,.35)}
+.lyr.hw{border-style:dashed}
+.lyr .hk{display:flex;flex-wrap:wrap;gap:6px}
+.hookbtn{font-family:var(--mono);font-size:12.5px;padding:5px 10px;border-radius:999px;border:1px solid;background:transparent}
+.hookbtn[data-c=obs]{color:var(--cyan);border-color:rgba(92,214,224,.45)}
+.hookbtn[data-c=net]{color:var(--honey);border-color:rgba(242,179,61,.45)}
+.hookbtn[data-c=sec]{color:var(--rose);border-color:rgba(245,143,192,.45)}
+.hookbtn.on{background:currentColor}
+.hookbtn.on span{color:var(--ink)}
+.hookbtn.dim{opacity:.22}
+.sep{display:flex;align-items:center;gap:10px;margin:10px 4px;font-size:12px;color:var(--violet)}
+.sep::before,.sep::after{content:"";flex:1;border-top:1px dashed rgba(183,156,255,.5)}
+.hinfo{padding:28px 30px;position:sticky;top:80px}
+.hinfo .cat{font-size:13.5px}
+.hinfo h4{font-size:26px;letter-spacing:-.02em;font-weight:700;margin-top:4px;font-family:var(--mono)}
+.hinfo p{color:#C3CADB;margin-top:12px}
+.hinfo .ex{margin-top:16px;background:#0B1220;border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;color:#C9D0E0}
+.hinfo .used{margin-top:14px;font-size:14.5px;color:var(--mute)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+
+/* live */
+.live{padding:26px}
+.lane{position:relative;height:170px;border-radius:var(--r-md);background:var(--ink);border:1px solid var(--line);overflow:hidden}
+.zone{position:absolute;top:0;bottom:0;display:flex;flex-direction:column;justify-content:flex-end;padding:10px 12px;font-size:12.5px;color:var(--dim);border-right:1px dashed var(--line)}
+.zone b{color:var(--mute);font-weight:500;font-size:13.5px}
+.zone.xdp{background:rgba(242,179,61,.07);border-right:1px solid var(--honey);border-left:1px solid var(--honey)}
+.zone.xdp b{color:var(--honey)}
+.zone.xdp.flash{background:rgba(242,179,61,.18)}
+.pkt{position:absolute;top:50px;width:16px;height:16px;border-radius:4px;background:var(--cyan);box-shadow:0 0 12px rgba(92,214,224,.6);will-change:transform}
+.pkt.drop{background:var(--bad);box-shadow:0 0 12px rgba(255,122,122,.6)}
+.livegrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:18px}
+.box{background:var(--ink);border:1px solid var(--line);border-radius:var(--r-md);padding:16px 18px}
+.box h5{font-size:13.5px;color:var(--mute);font-weight:500}
+.box .big{font-family:var(--mono);font-size:30px;margin-top:6px;letter-spacing:-.02em}
+.box .small{font-family:var(--mono);font-size:12.5px;color:var(--dim);margin-top:4px;white-space:pre-wrap}
+.lctl{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:18px}
+.lctl label{font-size:14.5px;color:var(--mute);display:flex;align-items:center;gap:10px}
+input[type=range]{accent-color:var(--honey);width:150px}
+
+/* compare */
+.cmp{width:100%;border-collapse:collapse;font-size:16px}
+.cmp th,.cmp td{text-align:left;padding:15px 20px;border-bottom:1px solid var(--line);vertical-align:top}
+.cmp th{font-weight:600;font-size:14.5px;color:var(--mute)}
+.cmp td:first-child{color:var(--mute);width:22%}
+.cmp td.e{color:var(--text)}
+.cmp tr:last-child td{border-bottom:0}
+.cmp th.e{color:var(--honey)}
+
+.cheat{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.cheat .item{padding:18px 20px}
+.cheat .item p{color:var(--mute);font-size:14.5px}
+.cheat .item code{display:block;margin-top:8px;font-size:13px;color:var(--honey);word-break:break-all}
+footer{padding:46px 0 70px;color:var(--dim);font-size:14px}
+
+@media (max-width:980px){
+  .hero .wrap,.pdetail,.regmap,.hooks{grid-template-columns:1fr}
+  .rosetta{grid-template-columns:1fr}
+  .rosetta .col{border-right:0;border-bottom:1px solid var(--line)}
+  .rosetta .codebox{max-height:340px}
+  .dec,.ver{grid-template-columns:1fr}
+  .dec .list{max-height:240px;border-right:0;border-bottom:1px solid var(--line)}
+  .ver .insns,.ver .regs{border-right:0;border-bottom:1px solid var(--line)}
+  .track{grid-template-columns:repeat(9,minmax(64px,1fr));overflow-x:auto;padding-bottom:6px}
+  .livegrid{grid-template-columns:1fr}
+  .hinfo{position:static}
+  .pdetail .term{border-left:0;border-top:1px solid var(--line);min-height:0}
+  .lyr{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  .wrap{padding:0 18px}
+  .shead{grid-template-columns:1fr}.shead p{grid-column:1}.shead .num{padding-top:0}
+  .stage .lab{font-size:12px}.stage .where{display:none}
+  nav.top .links{display:none}
+  .byte{width:46px;font-size:15px}
+  .bits .grp .bb span{width:24px;height:32px;font-size:14px}
+}
+</style>
+</head>
+<body>
+
+<nav class="top"><div class="wrap">
+  <a class="brand" href="#top">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#F2B33D" stroke-width="1.8"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><path d="M8 10h8M8 14h8" stroke-linecap="round"/></svg>
+    eBPF, all the way down
+  </a>
+  <div class="links">
+    <a href="#pipeline">Pipeline</a><a href="#rosetta">C → bytecode → x86</a><a href="#decoder">Decoder</a><a href="#verifier">Verifier</a><a href="#jit">JIT</a><a href="#hooks">Hooks</a><a href="#live">Live demo</a><a href="#compare">vs modules</a>
+  </div>
+</div></nav>
+
+<header class="hero" id="top">
+  <div class="comb"></div>
+  <div class="wrap">
+    <div>
+      <h1>eBPF<span class="thin">Safely extending the Linux kernel for observability, networking and security</span></h1>
+      <p class="lede">Follow one tiny XDP program from the C you write, through LLVM, the verifier and the JIT, until it runs as native x86-64 inside the kernel on every packet.</p>
+      <div class="cta">
+        <a class="btn primary" href="#pipeline">Walk the pipeline</a>
+        <a class="btn" href="#verifier">Try to break the verifier</a>
+      </div>
+    </div>
+    <div class="descent" aria-label="One line of C transformed into eBPF bytecode and x86-64 machine code">
+      <div class="layer" data-l="0"><div class="who"><b>C source</b><span>you write this</span></div><div class="code" id="d0"></div><div class="arrow"><span>clang -target bpf</span></div></div>
+      <div class="layer" data-l="1"><div class="who"><b>eBPF bytecode</b><span>8-byte instruction</span></div><div class="code" id="d1"></div><div class="arrow"><span>bpf() syscall</span></div></div>
+      <div class="boundary"><span>user space ↑  kernel ↓</span></div>
+      <div class="layer" data-l="2" style="margin-top:34px"><div class="who"><b>Verifier</b><span>proves it is safe</span></div><div class="code" id="d2"></div><div class="arrow"><span>JIT compiler</span></div></div>
+      <div class="layer" data-l="3"><div class="who"><b>x86-64 machine code</b><span>runs in ring 0</span></div><div class="code" id="d3"></div></div>
+      <div class="ring"><span id="dlabel">__sync_fetch_and_add</span><span>repeats every few seconds</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- PIPELINE -->
+<section class="s" id="pipeline"><div class="wrap">
+  <div class="shead"><div class="num">01</div><h2>Nine stages from source file to running kernel code</h2>
+  <p>eBPF lets you add logic to the kernel without writing a kernel module. The trick is that the kernel never trusts your code: it checks every path before turning it into machine instructions.</p></div>
+
+  <div class="track" id="track"><div class="fill" id="fill"></div></div>
+  <div class="panel">
+    <div class="pdetail">
+      <div class="txt" id="ptxt"></div>
+      <div class="term"><div class="bar" id="pbar"></div><div class="codebox" id="pcode"></div></div>
+    </div>
+    <div class="pctl">
+      <button class="chip" id="pprev">Previous stage</button>
+      <button class="chip" id="pnext">Next stage</button>
+      <button class="chip" id="pplay">Play all</button>
+    </div>
+  </div>
+</div></section>
+
+<!-- ROSETTA -->
+<section class="s" id="rosetta"><div class="wrap">
+  <div class="shead"><div class="num">02</div><h2>The same program in three languages</h2>
+  <p>Hover or tap any line. Its matching instructions light up in the other two columns, so you can see exactly what each line of C became.</p></div>
+
+  <div class="panel rosetta">
+    <div class="col"><div class="ch"><div><h4>C source</h4><small>xdp_count.bpf.c</small></div></div><div class="codebox" id="rc"></div></div>
+    <div class="col"><div class="ch"><div><h4>eBPF bytecode</h4><small id="rbsub">llvm-objdump -d</small></div>
+      <div class="seg" id="bseg"><button class="on" data-v="obj">As compiled</button><button data-v="xl">After verifier</button></div></div><div class="codebox" id="rb"></div></div>
+    <div class="col"><div class="ch"><div><h4>x86-64 machine code</h4><small>bpftool prog dump jited</small></div></div><div class="codebox" id="rx"></div></div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div class="panel explain"><div class="sw" id="exsw"></div><div><h4 id="exh">Pick a line to see what happens to it</h4><p id="exp">Each colour is one piece of the program. Notice how the helper call in yellow disappears after verification: for array maps, the kernel replaces <code>call 1</code> with a few inline instructions.</p></div></div>
+</div></section>
+
+<!-- DECODER -->
+<section class="s" id="decoder"><div class="wrap">
+  <div class="shead"><div class="num">03</div><h2>Inside one 64-bit instruction</h2>
+  <p>Every eBPF instruction is exactly 8 bytes: an opcode, two 4-bit register numbers, a 16-bit offset and a 32-bit immediate. Pick an instruction to decode the bytes the kernel actually receives.</p></div>
+  <div class="panel dec">
+    <div class="list" id="dlist"></div>
+    <div class="view" id="dview"></div>
+  </div>
+</div></section>
+
+<!-- VERIFIER -->
+<section class="s" id="verifier"><div class="wrap">
+  <div class="shead"><div class="num">04</div><h2>The verifier walks every path before anything runs</h2>
+  <p>It simulates the program symbolically, tracking the type and range of each register. Step through a safe program, then two broken versions to see the exact rejection the kernel would print.</p></div>
+  <div class="vtabs" id="vtabs"></div>
+  <div class="panel">
+    <div class="ver">
+      <div class="insns" id="vins"></div>
+      <div class="regs"><h5>Register and stack state</h5><div class="rgrid" id="vregs"></div></div>
+      <div class="logp"><h5>Verifier log (bpftool prog load -d)</h5><div class="vlog" id="vlog"></div></div>
+    </div>
+    <div class="vfoot">
+      <span class="badge" id="vbadge">ready</span>
+      <div class="say" id="vsay"></div>
+      <div class="ctrl"><button id="vreset">Reset</button><button id="vprev">Back</button><button id="vnext">Step</button><button id="vplay">Run</button></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- JIT -->
+<section class="s" id="jit"><div class="wrap">
+  <div class="shead"><div class="num">05</div><h2>The JIT maps eBPF registers straight onto CPU registers</h2>
+  <p>eBPF was designed to look like a real CPU. Its eleven registers line up with the x86-64 calling convention, so most instructions become one or two native instructions and helper calls become plain <code>call</code>s.</p></div>
+  <div class="regmap">
+    <div class="panel rmtable" id="rmap"></div>
+    <div class="panel facts">
+      <h4>What the kernel does with the JIT image</h4>
+      <p>Once the verifier approves, <code>bpf_int_jit_compile()</code> emits native code in a few passes until the jump offsets stop shrinking.</p>
+      <dl>
+        <dt>prologue</dt><dd>A 5-byte nop at the entry lets the kernel later patch in a trampoline, so other BPF programs (fentry/fexit) can trace this one.</dd>
+        <dt>memory</dt><dd>The image is placed in executable, read-only memory. Nothing can rewrite it after load.</dd>
+        <dt>hardening</dt><dd><code>net.core.bpf_jit_harden</code> enables constant blinding, so attacker-chosen immediates never appear raw in executable memory.</dd>
+        <dt>fallback</dt><dd>Without a JIT, an in-kernel interpreter runs the bytecode. Kernels built with <code>CONFIG_BPF_JIT_ALWAYS_ON</code> remove the interpreter entirely.</dd>
+        <dt>arches</dt><dd>x86-64, arm64, riscv, s390, powerpc, loongarch and more each have their own JIT backend for the same bytecode.</dd>
+      </dl>
+    </div>
+  </div>
+</div></section>
+
+<!-- HOOKS -->
+<section class="s" id="hooks"><div class="wrap">
+  <div class="shead"><div class="num">06</div><h2>Where programs attach</h2>
+  <p>The same pipeline powers three very different jobs. What changes is the hook: the event that calls your program and the context it receives.</p></div>
+  <div class="filters" id="hfilt"></div>
+  <div class="hooks">
+    <div class="panel stack" id="hstack"></div>
+    <div class="panel hinfo" id="hinfo"></div>
+  </div>
+</div></section>
+
+<!-- LIVE -->
+<section class="s" id="live"><div class="wrap">
+  <div class="shead"><div class="num">07</div><h2>Watch the program run</h2>
+  <p>A simulation of our XDP program on a network card. Every frame hits the native code before the kernel allocates anything. The program increments the map, and a user-space tool reads the same map once a second.</p></div>
+  <div class="panel live">
+    <div class="lane" id="lane">
+      <div class="zone" style="left:0;width:18%"><b>NIC RX ring</b>DMA from hardware</div>
+      <div class="zone xdp" id="zxdp" style="left:18%;width:22%"><b>XDP hook</b>count_packets() native x86</div>
+      <div class="zone" style="left:40%;width:30%"><b>Network stack</b>sk_buff, netfilter, TCP/IP</div>
+      <div class="zone" style="left:70%;width:30%;border-right:0"><b>Socket</b>delivered to application</div>
+    </div>
+    <div class="livegrid">
+      <div class="box"><h5>In kernel: pkt_count[0]</h5><div class="big" id="lmap">0</div><div class="small">lock add QWORD PTR [rax],rdi</div></div>
+      <div class="box"><h5>Reached the stack</h5><div class="big" id="lpass">0</div><div class="small" id="ldrop">dropped at XDP: 0</div></div>
+      <div class="box"><h5>User space: bpf(BPF_MAP_LOOKUP_ELEM)</h5><div class="big" id="luser">0</div><div class="small" id="lpps">polling every 1s</div></div>
+    </div>
+    <div class="lctl">
+      <div class="seg" id="lact"><button class="on" data-a="pass">return XDP_PASS</button><button data-a="drop">return XDP_DROP</button></div>
+      <label>Packet rate <input type="range" id="lrate" min="1" max="30" value="8"></label>
+      <button class="chip" id="lburst">Send a burst of 40</button>
+      <button class="chip" id="lpause">Pause</button>
+    </div>
+  </div>
+</div></section>
+
+<!-- COMPARE -->
+<section class="s" id="compare"><div class="wrap">
+  <div class="shead"><div class="num">08</div><h2>Why not just write a kernel module?</h2>
+  <p>Both run code in the kernel. The difference is who carries the risk.</p></div>
+  <div class="panel" style="overflow-x:auto">
+    <table class="cmp">
+      <tr><th></th><th>Kernel module</th><th class="e">eBPF program</th></tr>
+      <tr><td>Safety</td><td>A null pointer or infinite loop can crash or hang the whole machine.</td><td class="e">Verifier rejects unsafe memory access, unbounded loops and bad return values before load.</td></tr>
+      <tr><td>Portability</td><td>Rebuilt against each kernel's headers; internal APIs change without notice.</td><td class="e">CO-RE and BTF relocate struct offsets at load time: compile once, run on many kernels.</td></tr>
+      <tr><td>Deploying</td><td><code>insmod</code>; a bug means a reboot.</td><td class="e">Loaded and detached at runtime, swapped atomically through bpf_link.</td></tr>
+      <tr><td>What it can call</td><td>Any exported kernel symbol.</td><td class="e">Only helpers and kfuncs the kernel allows for that program type.</td></tr>
+      <tr><td>Speed</td><td>Native.</td><td class="e">Native after JIT; XDP runs before sk_buff allocation, so it is often faster than equivalent stack logic.</td></tr>
+      <tr><td>Privilege</td><td><code>CAP_SYS_MODULE</code></td><td class="e"><code>CAP_BPF</code> plus <code>CAP_PERFMON</code> or <code>CAP_NET_ADMIN</code> depending on program type (Linux 5.8+).</td></tr>
+    </table>
+  </div>
+
+  <div style="margin-top:56px" class="shead"><div class="num">09</div><h2>Commands to see this on your own machine</h2></div>
+  <div class="cheat">
+    <div class="panel item"><p>Compile with BTF debug info</p><code>clang -O2 -g -target bpf -c xdp_count.bpf.c -o xdp_count.bpf.o</code></div>
+    <div class="panel item"><p>Read the bytecode LLVM produced</p><code>llvm-objdump -d xdp_count.bpf.o</code></div>
+    <div class="panel item"><p>Load and attach to an interface</p><code>sudo ip link set dev eth0 xdp obj xdp_count.bpf.o sec xdp</code></div>
+    <div class="panel item"><p>Bytecode after the verifier rewrote it</p><code>sudo bpftool prog dump xlated name count_packets</code></div>
+    <div class="panel item"><p>The native machine code the JIT emitted</p><code>sudo bpftool prog dump jited name count_packets</code></div>
+    <div class="panel item"><p>Read the counter from user space</p><code>sudo bpftool map dump name pkt_count</code></div>
+  </div>
+</div></section>
+
+<footer><div class="wrap">Bytecode and verifier output follow LLVM and Linux 6.x conventions. Exact addresses, map IDs and offsets such as <code>0x110</code> differ between kernels and builds.</div></footer>
+
+<script>
+(()=>{
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- highlighters ---------- */
+function tok(s,re,map){let out='',last=0,m;re.lastIndex=0;
+  while((m=re.exec(s))){ if(m[0]===''){re.lastIndex++;continue}
+    out+=esc(s.slice(last,m.index));let cls=null;
+    for(let i=1;i<m.length;i++) if(m[i]!==undefined){cls=map[i-1];break}
+    out+=cls?`<span class="${cls}">${esc(m[0])}</span>`:esc(m[0]); last=re.lastIndex;}
+  return out+esc(s.slice(last));}
+const reC=/(\/\/.*$)|("(?:[^"\\]|\\.)*")|(#include\b)|\b(struct|int|char|if|return|void)\b|\b(__u32|__u64|__uint|__type|SEC|XDP_PASS|XDP_DROP|BPF_MAP_TYPE_ARRAY)\b|\b(0x[0-9a-fA-F]+|\d+)\b|\b([A-Za-z_]\w*)(?=\()/g;
+const hlC=s=>tok(s,reC,['c','st','k','k','t','n','f']);
+const reB=/(;.*$)|\b(call|exit|goto|if|lock|ll|map)\b|\b(r(?:10|[0-9]))\b|(-?\b0x[0-9a-f]+\b|-?\b\d+\b)|(\b(?:u8|u16|u32|u64)\b)/g;
+const hlB=s=>tok(s,reB,['c','k','r','n','t']);
+const reX=/(;.*$)|^(\s*\.L\w+:)|^(\s*[a-z]+(?:\s+[a-z]+)?)(?=\s|$)|\b(r(?:ax|bx|cx|dx|si|di|bp|sp|8|9|1[0-5])|e(?:ax|bx|cx|dx|si|di)|ax)\b|(\.L\w+)|(\b0x[0-9a-f]+\b)|\b(QWORD|DWORD|PTR)\b/g;
+function hlX(s){ // label prefix then mnemonic
+  const m=s.match(/^(\.L\w+:\s*)(.*)$/); if(m) return `<span class="p">${esc(m[1])}</span>`+hlX(m[2]);
+  return tok(s,reX,['c','p','m','r','p','n','t']);}
+
+/* ---------- program data ---------- */
+const C_SRC=[
+ ['#include <linux/bpf.h>'],['#include <bpf/bpf_helpers.h>'],[''],
+ ['struct {','M'],['    __uint(type, BPF_MAP_TYPE_ARRAY);','M'],['    __uint(max_entries, 1);','M'],['    __type(key, __u32);','M'],['    __type(value, __u64);','M'],['} pkt_count SEC(".maps");','M'],[''],
+ ['SEC("xdp")','P'],['int count_packets(struct xdp_md *ctx)','P'],['{'],
+ ['    __u32 key = 0;','A'],
+ ['    __u64 *count = bpf_map_lookup_elem(&pkt_count, &key);','B'],
+ ['    if (count)','C'],
+ ['        __sync_fetch_and_add(count, 1);','D'],
+ ['    return XDP_PASS;','E'],['}'],[''],
+ ['char LICENSE[] SEC("license") = "GPL";']
+];
+const B_OBJ=[ // [idx, text, group, bytes]
+ [0,'r1 = 0','A','b7 01 00 00 00 00 00 00'],
+ [1,'*(u32 *)(r10 - 4) = r1','A','63 1a fc ff 00 00 00 00'],
+ [2,'r2 = r10','B','bf a2 00 00 00 00 00 00'],
+ [3,'r2 += -4','B','07 02 00 00 fc ff ff ff'],
+ [4,'r1 = 0 ll        ; reloc → pkt_count','B M','18 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00'],
+ [6,'call 1           ; bpf_map_lookup_elem','B','85 00 00 00 01 00 00 00'],
+ [7,'if r0 == 0 goto +2','C','15 00 02 00 00 00 00 00'],
+ [8,'r1 = 1','D','b7 01 00 00 01 00 00 00'],
+ [9,'lock *(u64 *)(r0 + 0) += r1','D','db 10 00 00 00 00 00 00'],
+ [10,'r0 = 2           ; XDP_PASS','E','b7 00 00 00 02 00 00 00'],
+ [11,'exit','E','95 00 00 00 00 00 00 00']
+];
+const B_XL=[
+ [0,'r1 = 0','A'],[1,'*(u32 *)(r10 -4) = r1','A'],[2,'r2 = r10','B'],[3,'r2 += -4','B'],
+ [4,'r1 = map[id:42]       ; real pointer now','B M'],
+ [6,'r1 += 272             ; &array->value[0]','B'],
+ [7,'r0 = *(u32 *)(r2 +0)  ; load key','B'],
+ [8,'if r0 >= 0x1 goto pc+3 ; bounds check','B'],
+ [9,'r0 <<= 3              ; key * 8 bytes','B'],
+ [10,'r0 += r1','B'],[11,'goto pc+1','B'],[12,'r0 = 0','B'],
+ [13,'if r0 == 0x0 goto pc+2','C'],
+ [14,'r1 = 1','D'],[15,'lock *(u64 *)(r0 +0) += r1','D'],
+ [16,'r0 = 2','E'],[17,'exit','E']
+];
+const X86=[
+ ['nop DWORD PTR [rax+rax*1+0x0]','P'],['xchg ax,ax','P'],['push rbp','P'],['mov rbp,rsp','P'],['sub rsp,0x8','P'],
+ ['xor edi,edi','A'],['mov DWORD PTR [rbp-0x4],edi','A'],
+ ['mov rsi,rbp','B'],['add rsi,0xfffffffffffffffc','B'],['movabs rdi,0xffff9a3c81d4e000','B M'],['add rdi,0x110','B'],
+ ['mov eax,DWORD PTR [rsi+0x0]','B'],['cmp rax,0x1','B'],['jae .Lnull','B'],['shl rax,0x3','B'],['add rax,rdi','B'],['jmp .Lchk','B'],['.Lnull: xor eax,eax','B'],
+ ['.Lchk: test rax,rax','C'],['je .Lret','C'],
+ ['mov edi,0x1','D'],['lock add QWORD PTR [rax+0x0],rdi','D'],
+ ['.Lret: mov eax,0x2','E'],['leave','E'],['ret','E']
+];
+const GROUPS={
+ M:['Map definition','The anonymous struct in SEC(".maps") is described with BTF. The loader creates the map with BPF_MAP_CREATE, then patches the 16-byte ld_imm64 instruction with the map fd. The verifier swaps that fd for the real kernel address you see in the x86 movabs.'],
+ P:['Entry and prologue','SEC("xdp") tells libbpf the program type, so the kernel passes an xdp_md context in r1. The JIT adds a prologue: a patchable 5-byte nop for trampolines, a 2-byte nop where a tail-call counter would go, then a frame with 8 bytes reserved for the BPF stack.'],
+ A:['A local variable on the BPF stack','key lives on the 512-byte BPF stack. r10 is the read-only frame pointer, so key sits at r10-4. In x86, r1 becomes rdi and r10 becomes rbp, and loading zero becomes the idiom xor edi,edi.'],
+ B:['A helper call that turns into inline code','Arguments go in r1-r5: r1 = map, r2 = &key. LLVM emits call 1, the helper ID of bpf_map_lookup_elem. Because this is an array map, the verifier inlines the lookup: a bounds check, multiply by value size, add the base. There is no function call left in the machine code.'],
+ C:['The null check the verifier insists on','After the lookup, R0 has type map_value_or_null. Only on the branch where it is non-zero does it become map_value and safe to dereference. Delete this if and the program is rejected (try it in section 04).'],
+ D:['Atomic increment','__sync_fetch_and_add compiles to opcode 0xdb: BPF_STX | BPF_ATOMIC | BPF_DW with imm = BPF_ADD. The JIT turns it into a single lock add, so counts stay correct when many CPUs process packets at once.'],
+ E:['Return value','The return value goes in r0, which maps to rax. XDP_PASS is 2, telling the driver to hand the frame to the normal network stack. exit becomes leave; ret.']
+};
+const GCOL={M:'var(--gM)',P:'var(--gP)',A:'var(--gA)',B:'var(--gB)',C:'var(--gC)',D:'var(--gD)',E:'var(--gE)'};
+
+/* ---------- hero descent ---------- */
+const DESC=[
+ {lab:'__sync_fetch_and_add', l:['__sync_fetch_and_add(count, 1);','db 10 00 00 00 00 00 00','R0 map_value, off 0 + 8 ≤ 8  ✓','lock add QWORD PTR [rax+0x0],rdi']},
+ {lab:'local variable', l:['__u32 key = 0;','63 1a fc ff 00 00 00 00','fp-4 written, 4 bytes  ✓','mov DWORD PTR [rbp-0x4],edi']},
+ {lab:'null check', l:['if (count)','15 00 02 00 00 00 00 00','R0 map_value_or_null → map_value  ✓','test rax,rax ; je .Lret']},
+ {lab:'return', l:['return XDP_PASS;','b7 00 00 00 02 00 00 00','R0 = 2, valid XDP action  ✓','mov eax,0x2 ; leave ; ret']}
+];
+const dEls=[0,1,2,3].map(i=>$('#d'+i)), layers=$$('.descent .layer');
+const hlD=[hlC,s=>`<span class="m">${esc(s)}</span>`,s=>`<span style="color:var(--ok)">${esc(s)}</span>`,s=>s.split(' ; ').map(hlX).join('<span class="c"> ; </span>')];
+let di=0;
+function typeOut(el,txt,hl,cb){ if(reduce){el.innerHTML=hl(txt);cb&&cb();return}
+  let i=0;const t=setInterval(()=>{i+=2;el.innerHTML=hl(txt.slice(0,i))+'<span style="color:var(--honey)">▌</span>';if(i>=txt.length){clearInterval(t);el.innerHTML=hl(txt);cb&&cb()}},22);}
+function runDescent(){const d=DESC[di%DESC.length];$('#dlabel').textContent=d.lab;
+  dEls.forEach(e=>e.innerHTML='&nbsp;');layers.forEach(l=>l.classList.remove('lit'));
+  let k=0;const next=()=>{if(k>3){setTimeout(()=>{di++;runDescent()},3200);return}
+    layers.forEach(l=>l.classList.remove('lit'));layers[k].classList.add('lit');
+    const kk=k;typeOut(dEls[kk],d.l[kk],hlD[kk],()=>{k++;setTimeout(next,380)})};next();}
+runDescent();
+
+/* ---------- pipeline ---------- */
+const STAGES=[
+ {lab:'Write C',sp:'user',t:'Write restricted C',sub:'Your editor, user space',
+  p:'You write a small C function for a specific hook. It is ordinary C with strict limits, because the kernel has to be able to prove it safe.',
+  li:['No libc and no arbitrary kernel functions: only BPF helpers and kfuncs','Loops must be provably bounded','Stack is capped at 512 bytes per frame','Maps are the only way to keep state or talk to user space'],
+  bar:'xdp_count.bpf.c',code:()=>C_SRC.slice(10,19).map(l=>[hlC(l[0])])},
+ {lab:'Clang / LLVM',sp:'user',t:'Clang lowers C to LLVM IR, then to BPF',sub:'clang -O2 -g -target bpf',
+  p:'Clang parses the C into LLVM IR, the same IR used for any other target. The -target bpf flag selects the LLVM BPF backend, which emits a 64-bit RISC instruction set with 11 registers and fixed 8-byte instructions. The -g flag adds BTF type information.',
+  li:['Helpers are declared as function pointers to fixed IDs, so the IR calls address 1','__sync_fetch_and_add becomes an atomicrmw instruction'],
+  bar:'clang -O2 -g -target bpf -S -emit-llvm  (excerpt)',code:()=>[
+   '<span class="c">; key = 0 on the stack</span>','store i32 0, ptr %key, align 4',
+   '<span class="c">; bpf_map_lookup_elem is helper #1</span>','%2 = call ptr inttoptr (i64 1 to ptr)(ptr @pkt_count, ptr %key)','%3 = icmp eq ptr %2, null','br i1 %3, label %done, label %inc','','inc:','  %4 = atomicrmw add ptr %2, i64 1 seq_cst','  br label %done','','done:','  ret i32 2'].map(s=>[s.startsWith('<')?s:esc(s).replace(/\b(call|store|icmp|br|ret|atomicrmw|label)\b/g,'<span class="k">$1</span>').replace(/(@\w+|%\w+)/g,'<span class="r">$1</span>')])},
+ {lab:'ELF object',sp:'user',t:'An ELF object file with sections per program',sub:'xdp_count.bpf.o',
+  p:'The output is a normal ELF file. Each SEC() name becomes a section. Code, map definitions, the license string, BTF type data and relocations are all stored separately for the loader to read.',
+  li:['xdp section: 12 instruction slots × 8 bytes = 0x60 (ld_imm64 takes two)','.relxdp records that instruction 4 needs the address of pkt_count','.BTF and .BTF.ext carry types and line info for CO-RE and the verifier'],
+  bar:'llvm-objdump -h xdp_count.bpf.o',code:()=>['Idx Name          Size     Type','  2 xdp           00000060 TEXT','  3 .relxdp       00000010','  4 license       00000004 DATA','  5 .maps         00000020 DATA','  6 .BTF          …','  7 .BTF.ext      …','','<span class="c">Relocation section \'.relxdp\':</span>','Offset  Type          Symbol','0x20    R_BPF_64_64   pkt_count'].map(s=>[s.startsWith('<')?s:esc(s).replace(/\b(xdp|\.relxdp|\.maps)\b/g,'<span class="m">$1</span>')])},
+ {lab:'Loader',sp:'user',t:'libbpf loads it through the bpf() syscall',sub:'User space hands bytecode to the kernel',
+  p:'A loader, usually libbpf through a bpftool-generated skeleton, reads the ELF. It creates the maps first, patches each map reference with the new fd, applies CO-RE relocations against the running kernel\'s BTF in /sys/kernel/btf/vmlinux, then asks the kernel to load the program.',
+  li:['BPF_MAP_CREATE returns a file descriptor for pkt_count','Instruction 4 is rewritten: src_reg = BPF_PSEUDO_MAP_FD, imm = that fd','BPF_PROG_LOAD sends the instructions, program type and license'],
+  bar:'strace -e bpf ./xdp_count  (abridged)',code:()=>['bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_ARRAY,','    key_size=4, value_size=8, max_entries=1,','    map_name="pkt_count", …}, …) = <span class="n">5</span>','','<span class="c">// insn 4 patched: 18 01 00 00 00 … → 18 11 00 00 05 …</span>','','bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_XDP,','    insn_cnt=12, insns=0x5581…, license="GPL",','    prog_name="count_packets", …}, …) = <span class="n">6</span>'].map(s=>[s.replace(/\b(bpf|BPF_\w+)\b/g,'<span class="m">$1</span>')])},
+ {lab:'Verifier',sp:'kernel',t:'The verifier proves the program safe',sub:'kernel/bpf/verifier.c',
+  p:'This is the step that makes eBPF different. Before anything runs, the kernel explores every possible execution path and tracks what every register holds.',
+  li:['Control flow must form a graph with no unreachable code and only bounded loops','Every memory access is checked against the type and bounds of its pointer','Helper arguments must match the helper\'s declared types','GPL-only helpers require a GPL-compatible license','Gives up after 1 million processed instructions'],
+  bar:'verifier log (abridged)',code:()=>['6: (85) call bpf_map_lookup_elem#1','   R0_w=map_value_or_null(id=1,ks=4,vs=8)','7: (15) if r0 == 0x0 goto pc+2','   R0_w=map_value(ks=4,vs=8)','9: (db) lock *(u64 *)(r0 +0) += r1','11: (95) exit','from 7 to 10: safe','','<span class="g" style="color:var(--ok)">processed 11 insns (limit 1000000)</span>','<span style="color:var(--ok)">max_states_per_insn 0 total_states 1</span>'].map(s=>[s.startsWith('<')?s:hlB(s)])},
+ {lab:'Rewrite',sp:'kernel',t:'The kernel rewrites the bytecode',sub:'bpftool prog dump xlated',
+  p:'After verification the kernel patches the program for speed and safety. What actually gets compiled is not quite what you loaded.',
+  li:['Map fds become real kernel pointers','Array map lookups are inlined, removing the helper call','Context field reads are translated to the kernel\'s real structs (xdp_md → xdp_buff)','Spectre mitigations and dead-code removal are applied'],
+  bar:'bpftool prog dump xlated name count_packets',code:()=>B_XL.map(r=>[`<span class="c">${String(r[0]).padStart(2)}: </span>`+hlB(r[1])])},
+ {lab:'JIT',sp:'kernel',t:'The JIT emits native machine code',sub:'arch/x86/net/bpf_jit_comp.c',
+  p:'Each eBPF instruction becomes one or a few x86-64 instructions. Registers map one to one, so there is no interpretation overhead at run time.',
+  li:['r0→rax, r1→rdi, r2→rsi, r10→rbp','The image goes into executable, read-only memory','Optional constant blinding hides attacker-chosen immediates'],
+  bar:'bpftool prog dump jited name count_packets',code:()=>X86.map(r=>[hlX(r[0])])},
+ {lab:'Attach',sp:'kernel',t:'Attach the program to a hook',sub:'bpf_link',
+  p:'Loading is not running. The program only executes once it is attached to an event. For XDP, the network driver calls it for every received frame, before the kernel allocates an sk_buff.',
+  li:['A bpf_link ties the program to eth0 and can be updated atomically','XDP calls go through the BPF dispatcher, avoiding costly retpoline indirect calls','The program stays loaded while a link, fd or pin holds a reference'],
+  bar:'attach from the shell',code:()=>['<span class="c"># either</span>','sudo ip link set dev eth0 xdp obj xdp_count.bpf.o sec xdp','','<span class="c"># or with bpftool</span>','sudo bpftool net attach xdp id 42 dev eth0','','sudo bpftool net show','<span class="c">xdp:</span>','eth0(2) driver id 42'].map(s=>[s])},
+ {lab:'Run + maps',sp:'kernel',t:'It runs on every packet and shares data through maps',sub:'Kernel and user space read the same memory',
+  p:'Now the native code runs at line rate. The map is the bridge: the program writes to it inside the kernel, and any user-space tool can read it with BPF_MAP_LOOKUP_ELEM or by mmap-ing an array map.',
+  li:['Maps include arrays, hashes, LRU caches, ring buffers and per-CPU variants','Ring buffers stream events to user space efficiently','Maps can be pinned in /sys/fs/bpf to outlive the loader'],
+  bar:'bpftool map dump name pkt_count',code:()=>['key: 00 00 00 00  value: e7 fd 1b 00 00 00 00 00','Found 1 element','','<span class="c"># value is little-endian: 0x1bfde7 = 1834471 packets</span>'].map(s=>[s.startsWith('<')?s:esc(s).replace(/([0-9a-f]{2})(?= |$)/g,'<span class="n">$1</span>')])}
+];
+const track=$('#track');
+STAGES.forEach((s,i)=>{const b=document.createElement('button');b.className='stage';b.dataset.space=s.sp;
+  b.innerHTML=`<span class="dot">${i+1}</span><span class="lab">${s.lab}</span><span class="where">${s.sp==='user'?'user space':'kernel'}</span>`;
+  b.onclick=()=>{stopPlay();showStage(i)};track.appendChild(b)});
+let cur=0,playT=null;
+function renderCode(el,rows){el.innerHTML=rows.map((r,i)=>`<div class="ln"><span class="no">${i+1}</span><span class="tx">${r[0]||' '}</span></div>`).join('')}
+function showStage(i){cur=i;const s=STAGES[i];
+  $$('.stage').forEach((e,k)=>{e.classList.toggle('on',k===i);e.classList.toggle('done',k<i)});
+  $('#fill').style.width=(i/(STAGES.length-1)*90)+'%';
+  $('#ptxt').innerHTML=`<h3>${s.t}</h3><div class="sub">${s.sub}</div><p>${s.p}</p><ul>${s.li.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`;
+  $('#pbar').textContent='$ '+s.bar; renderCode($('#pcode'),s.code());}
+function stopPlay(){if(playT){clearInterval(playT);playT=null;$('#pplay').textContent='Play all';$('#pplay').classList.remove('on')}}
+$('#pprev').onclick=()=>{stopPlay();showStage(Math.max(0,cur-1))};
+$('#pnext').onclick=()=>{stopPlay();showStage(Math.min(STAGES.length-1,cur+1))};
+$('#pplay').onclick=()=>{if(playT){stopPlay();return}
+  $('#pplay').textContent='Pause';$('#pplay').classList.add('on');if(cur===STAGES.length-1)showStage(0);
+  playT=setInterval(()=>{if(cur>=STAGES.length-1){stopPlay();return}showStage(cur+1)},4200)};
+showStage(0);
+
+/* ---------- rosetta ---------- */
+let bview='obj',pinned=null;
+function lnHTML(no,txt,g){return `<div class="ln"${g?` data-g="${g}" tabindex="0"`:''}><span class="no">${no}</span><span class="tx">${txt||' '}</span></div>`}
+function renderRosetta(){
+  $('#rc').innerHTML=C_SRC.map((l,i)=>lnHTML(i+1,hlC(l[0]),l[1])).join('');
+  const B=bview==='obj'?B_OBJ:B_XL;
+  $('#rb').innerHTML=B.map(r=>lnHTML(r[0],hlB(r[1]),r[2])).join('');
+  $('#rbsub').textContent=bview==='obj'?'llvm-objdump -d (what LLVM wrote)':'bpftool prog dump xlated (what the kernel compiles)';
+  $('#rx').innerHTML=X86.map((r,i)=>lnHTML((i*4).toString(16).padStart(2,'0'),hlX(r[0]),r[1])).join('');
+  $$('#rosetta .ln[data-g]').forEach(el=>{
+    el.addEventListener('mouseenter',()=>{if(!pinned)hiG(el.dataset.g.split(' ')[0])});
+    el.addEventListener('mouseleave',()=>{if(!pinned)hiG(null)});
+    const pin=()=>{const g=el.dataset.g.split(' ')[0];pinned=pinned===g?null:g;hiG(pinned||g)};
+    el.addEventListener('click',pin);el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();pin()}});
+  });
+  if(pinned)hiG(pinned);
+}
+function hiG(g){
+  $$('#rosetta .ln[data-g]').forEach(el=>{const on=g&&el.dataset.g.split(' ').includes(g);
+    el.classList.toggle('hl',!!on);el.style.borderLeftColor=on?GCOL[g]:'transparent'});
+  $$('#legend button').forEach(b=>b.classList.toggle('on',b.dataset.g===g));
+  if(!g){return}
+  $('#exsw').style.background=GCOL[g];$('#exh').textContent=GROUPS[g][0];$('#exp').textContent=GROUPS[g][1];
+  // scroll first matching into view within each column
+  ['#rc','#rb','#rx'].forEach(id=>{const box=$(id),f=box.querySelector('.ln.hl');if(f){const top=f.offsetTop-box.offsetTop;if(top<box.scrollTop||top>box.scrollTop+box.clientHeight-40)box.scrollTo({top:top-60,behavior:reduce?'auto':'smooth'})}});
+}
+$('#legend').innerHTML=Object.keys(GROUPS).map(g=>`<button data-g="${g}"><i style="background:${GCOL[g]}"></i>${GROUPS[g][0]}</button>`).join('');
+$$('#legend button').forEach(b=>b.onclick=()=>{pinned=pinned===b.dataset.g?null:b.dataset.g;hiG(pinned);if(!pinned)hiG(null)});
+$$('#bseg button').forEach(b=>b.onclick=()=>{bview=b.dataset.v;$$('#bseg button').forEach(x=>x.classList.toggle('on',x===b));renderRosetta()});
+renderRosetta();
+
+/* ---------- decoder ---------- */
+const CLS=['LD','LDX','ST','STX','ALU','JMP','JMP32','ALU64'];
+const ALUOP={0:'ADD',1:'SUB',2:'MUL',3:'DIV',4:'OR',5:'AND',6:'LSH',7:'RSH',8:'NEG',9:'MOD',10:'XOR',11:'MOV',12:'ARSH',13:'END'};
+const JMPOP={0:'JA',1:'JEQ',2:'JGT',3:'JGE',4:'JSET',5:'JNE',6:'JSGT',7:'JSGE',8:'CALL',9:'EXIT',10:'JLT',11:'JLE',12:'JSLT',13:'JSLE'};
+const SIZE={0:'W (4 bytes)',8:'H (2 bytes)',16:'B (1 byte)',24:'DW (8 bytes)'};
+const MODE={0:'IMM',32:'ABS',64:'IND',96:'MEM',128:'MEMSX',192:'ATOMIC'};
+const ATOM={0:'ADD',1:'ADD | FETCH',64:'OR',80:'AND',160:'XOR',225:'XCHG',241:'CMPXCHG'};
+const NOTES={
+ 0:'MOV with an immediate: r1 = 0. Class ALU64 means the full 64-bit register is written.',
+ 1:'Stores the low 32 bits of r1 to the stack at r10-4. The offset field holds -4 as 0xfffc in little-endian.',
+ 2:'Register-to-register move. The source bit is set (X), so the value comes from src_reg r10 instead of the immediate.',
+ 3:'Adds the immediate -4. Immediates are signed 32-bit values, sign-extended to 64 bits for ALU64.',
+ 4:'ld_imm64 is the only 16-byte instruction: the second slot carries the upper 32 bits. Here it is all zero, waiting for the loader to patch in the map fd (src_reg becomes 1, BPF_PSEUDO_MAP_FD).',
+ 6:'CALL with imm = 1, the helper ID of bpf_map_lookup_elem. Helper IDs are a stable kernel ABI.',
+ 7:'Conditional jump: if r0 == 0 skip the next 2 instructions. Jump offsets count instructions, not bytes.',
+ 8:'r1 = 1, the value to add.',
+ 9:'An atomic store. For ATOMIC mode, the immediate selects the operation: 0x00 means ADD without fetching the old value.',
+ 10:'r0 = 2. On exit, r0 is the return value: 2 is XDP_PASS.',
+ 11:'EXIT returns from the program with the value in r0. The verifier checks it is a valid XDP action.'
+};
+function decode(hex){const b=hex.split(' ').map(h=>parseInt(h,16));const op=b[0],cls=op&7;
+  const dst=b[1]&15,src=b[1]>>4,off=((b[2]|b[3]<<8)<<16)>>16,imm=(b[4]|b[5]<<8|b[6]<<16|b[7]<<24)|0;
+  const alu=cls===4||cls===7||cls===5||cls===6;const f={op,cls,dst,src,off,imm,b,alu};
+  if(alu){f.srcbit=(op>>3)&1;f.code=op>>4;f.opname=(cls===5||cls===6?JMPOP:ALUOP)[f.code]}
+  else{f.size=op&0x18;f.mode=op&0xe0}
+  return f}
+function showDec(k){const r=B_OBJ[k],f=decode(r[3]);
+  $$('#dlist button').forEach((b,i)=>b.classList.toggle('on',i===k));
+  const lab=['opcode','dst | src','offset','offset','imm','imm','imm','imm'],cl=['op','rg','of','of','im','im','im','im'];
+  let bytes=f.b.slice(0,8).map((v,i)=>`<div class="byte ${cl[i]}">${v.toString(16).padStart(2,'0')}<small>${lab[i]}</small></div>`).join('');
+  if(f.b.length>8)bytes+=f.b.slice(8).map((v,i)=>`<div class="byte" style="opacity:.6">${v.toString(16).padStart(2,'0')}<small>${i>=4?'imm hi':'zero'}</small></div>`).join('');
+  const bits=f.op.toString(2).padStart(8,'0').split('');const sp=a=>a.map(x=>`<span>${x}</span>`).join('');
+  let groups;
+  if(f.alu) groups=`<div class="grp g1"><div class="bb">${sp(bits.slice(0,4))}</div><em>operation<br>${f.opname}</em></div><div class="grp g2"><div class="bb">${sp(bits.slice(4,5))}</div><em>source<br>${f.srcbit?'X reg':'K imm'}</em></div><div class="grp g3"><div class="bb">${sp(bits.slice(5))}</div><em>class<br>${CLS[f.cls]}</em></div>`;
+  else groups=`<div class="grp g1"><div class="bb">${sp(bits.slice(0,3))}</div><em>mode<br>${MODE[f.mode]}</em></div><div class="grp g2"><div class="bb">${sp(bits.slice(3,5))}</div><em>size<br>${SIZE[f.size].split(' ')[0]}</em></div><div class="grp g3"><div class="bb">${sp(bits.slice(5))}</div><em>class<br>${CLS[f.cls]}</em></div>`;
+  const kind=f.alu?`BPF_${CLS[f.cls]} | BPF_${f.opname} | BPF_${f.srcbit?'X':'K'}`:`BPF_${CLS[f.cls]} | BPF_${SIZE[f.size].split(' ')[0]} | BPF_${MODE[f.mode]}`;
+  const fields=[['opcode',`0x${f.op.toString(16).padStart(2,'0')}`],['meaning',kind],['dst_reg',`r${f.dst}`],['src_reg',`r${f.src}`],['off',String(f.off)],['imm',f.mode===192?`${f.imm} (${ATOM[f.imm]})`:String(f.imm)]];
+  $('#dview').innerHTML=`<div class="asm">${hlB(r[1].split(';')[0].trim())}</div>
+   <div class="bytes">${bytes}</div><div class="bits">${groups}</div>
+   <div class="fields">${fields.map(x=>`<div><span>${x[0]}</span><b>${esc(x[1])}</b></div>`).join('')}</div>
+   <p class="note">${NOTES[r[0]]}</p>`;}
+$('#dlist').innerHTML=B_OBJ.map((r,i)=>`<button><span class="i">${r[0]}</span><span>${esc(r[1].split(';')[0].trim())}</span></button>`).join('');
+$$('#dlist button').forEach((b,i)=>b.onclick=()=>showDec(i));showDec(8);
+
+/* ---------- verifier ---------- */
+const RN=['R0','R1','R2','R3','R4','R5','R6','R7','R8','R9','R10','fp-4'];
+const base={R1:'ctx(off=0,imm=0)',R10:'fp0'};
+const common=[
+ {pc:null,set:{},say:'Initial state. R1 points to the xdp_md context, R10 is the read-only frame pointer. Everything else is uninitialized, and reading it would be rejected.',log:'func#0 @0'},
+ {pc:0,set:{R1:'scalar(0)'},say:'r1 = 0. R1 is now a known constant: a scalar with value 0.',log:'0: (b7) r1 = 0                ; R1_w=0'},
+ {pc:1,set:{'fp-4':'0000 (4 bytes init)'},say:'Writes 4 bytes to the stack. The verifier marks fp-4..fp-1 as initialized, so it may later be passed as the map key.',log:'1: (63) *(u32 *)(r10 -4) = r1 ; R1_w=0 R10=fp0 fp-8=0000????'},
+ {pc:2,set:{R2:'fp0'},say:'R2 copies the frame pointer. Its type is a stack pointer, not a number, so it cannot be leaked or forged.',log:'2: (bf) r2 = r10              ; R2_w=fp0 R10=fp0'},
+ {pc:3,set:{R2:'fp-4'},say:'Pointer arithmetic on a stack pointer stays in bounds: R2 now points at key.',log:'3: (07) r2 += -4              ; R2_w=fp-4'},
+ {pc:4,set:{R1:'map_ptr(ks=4,vs=8)'},say:'ld_imm64 with a map fd. R1 becomes a typed map pointer that knows the key size (4) and value size (8).',log:'4: (18) r1 = 0xffff9a3c81d4e000 ; R1_w=map_ptr(ks=4,vs=8)'},
+ {pc:6,set:{R0:'map_value_or_null(id=1)',R1:'—',R2:'—',R3:'—',R4:'—',R5:'—'},say:'Helper call. The verifier checks R1 is a map pointer and R2 points at 4 initialized stack bytes. The result may be NULL, so R0 is map_value_or_null. Caller-saved R1-R5 are now unreadable.',log:'6: (85) call bpf_map_lookup_elem#1 ; R0_w=map_value_or_null(id=1,ks=4,vs=8)'}
+];
+const SC={
+ safe:{name:'Safe program',insns:[[0,'r1 = 0'],[1,'*(u32 *)(r10 -4) = r1'],[2,'r2 = r10'],[3,'r2 += -4'],[4,'r1 = map[pkt_count]'],[6,'call bpf_map_lookup_elem#1'],[7,'if r0 == 0x0 goto pc+2'],[8,'r1 = 1'],[9,'lock *(u64 *)(r0 +0) += r1'],[10,'r0 = 2'],[11,'exit']],
+  steps:[...common,
+   {pc:7,set:{R0:'map_value(ks=4,vs=8)'},say:'Branch. The verifier saves the "R0 == 0" path to check later, and follows the fall-through where R0 is known to be non-NULL. R0 is upgraded to map_value.',log:'7: (15) if r0 == 0x0 goto pc+2 ; R0_w=map_value(ks=4,vs=8)'},
+   {pc:8,set:{R1:'scalar(1)'},say:'r1 = 1.',log:'8: (b7) r1 = 1                ; R1_w=1'},
+   {pc:9,set:{},say:'Atomic add to *(u64*)(R0+0). R0 is map_value with value size 8, and offset 0 + size 8 ≤ 8. Access allowed.',log:'9: (db) lock *(u64 *)(r0 +0) += r1 ; R0_w=map_value(ks=4,vs=8) R1_w=1'},
+   {pc:10,set:{R0:'scalar(2)'},say:'r0 = 2, the return value.',log:'10: (b7) r0 = 2               ; R0_w=2'},
+   {pc:11,set:{},say:'exit with R0 = 2. That is a valid XDP action, so this path is done. Now the saved branch.',log:'11: (95) exit'},
+   {pc:10,set:{R0:'scalar(0)',R1:'—'},say:'The saved path: jump to 10 with R0 = 0. Instruction 10 overwrites R0 before reading it, so this state is equivalent to one already verified. The verifier prunes it instead of re-walking it.',log:'from 7 to 10: safe',fin:'ok'}
+  ],result:['ok','processed 11 insns (limit 1000000) max_states_per_insn 0 total_states 1 peak_states 1 mark_read 1','ACCEPTED: bpf() returns a program fd']},
+ nonull:{name:'Missing null check',code:'__sync_fetch_and_add(count, 1);   // no if (count)',insns:[[0,'r1 = 0'],[1,'*(u32 *)(r10 -4) = r1'],[2,'r2 = r10'],[3,'r2 += -4'],[4,'r1 = map[pkt_count]'],[6,'call bpf_map_lookup_elem#1'],[7,'r1 = 1'],[8,'lock *(u64 *)(r0 +0) += r1'],[9,'r0 = 2'],[10,'exit']],
+  steps:[...common,
+   {pc:7,set:{R1:'scalar(1)'},say:'r1 = 1. Note that R0 is still map_value_or_null: nothing has proven it non-NULL.',log:'7: (b7) r1 = 1                ; R1_w=1'},
+   {pc:8,set:{},err:true,say:'Dereferencing R0 while it might be NULL. In a kernel module this would be a potential crash. Here the program is rejected and never runs.',log:'8: (db) lock *(u64 *)(r0 +0) += r1\nR0 invalid mem access \'map_value_or_null\'',fin:'bad'}
+  ],result:['bad','processed 8 insns (limit 1000000) max_states_per_insn 0 total_states 0 peak_states 0 mark_read 0','REJECTED: bpf() returns -EACCES (-13)']},
+ oob:{name:'Out-of-bounds write',code:'__sync_fetch_and_add(&count[1], 1);  // value is only 8 bytes',insns:[[0,'r1 = 0'],[1,'*(u32 *)(r10 -4) = r1'],[2,'r2 = r10'],[3,'r2 += -4'],[4,'r1 = map[pkt_count]'],[6,'call bpf_map_lookup_elem#1'],[7,'if r0 == 0x0 goto pc+2'],[8,'r1 = 1'],[9,'lock *(u64 *)(r0 +8) += r1'],[10,'r0 = 2'],[11,'exit']],
+  steps:[...common,
+   {pc:7,set:{R0:'map_value(ks=4,vs=8)'},say:'The null check is present, so R0 becomes map_value on the fall-through path.',log:'7: (15) if r0 == 0x0 goto pc+2 ; R0_w=map_value(ks=4,vs=8)'},
+   {pc:8,set:{R1:'scalar(1)'},say:'r1 = 1.',log:'8: (b7) r1 = 1                ; R1_w=1'},
+   {pc:9,set:{},err:true,say:'Writing 8 bytes at offset 8, but the map value is only 8 bytes long. Off 8 + size 8 = 16 > 8. That would corrupt neighbouring kernel memory, so it is rejected.',log:'9: (db) lock *(u64 *)(r0 +8) += r1\ninvalid access to map value, value_size=8 off=8 size=8\nR0 min value is outside of the allowed memory range',fin:'bad'}
+  ],result:['bad','processed 9 insns (limit 1000000) max_states_per_insn 0 total_states 0 peak_states 0 mark_read 0','REJECTED: bpf() returns -EACCES (-13)']}
+};
+let sc='safe',vs=0,vT=null,states=[];
+function buildStates(){states=[];let s={};RN.forEach(r=>s[r]='—');Object.assign(s,base);
+  SC[sc].steps.forEach(st=>{s={...s,...st.set};states.push({...s})})}
+function ty(v){if(v==='—')return'none';if(v.startsWith('ctx'))return'ctx';if(v.startsWith('fp')||v.startsWith('0000'))return'fp';if(v.startsWith('map_ptr'))return'map';if(v.includes('or_null'))return'null';if(v.startsWith('map_value'))return'val';return'scalar'}
+function vRender(){const S=SC[sc],st=S.steps[vs],state=states[vs],prev=vs>0?states[vs-1]:null;
+  const visited=new Set(S.steps.slice(0,vs).map(x=>x.pc));
+  $('#vins').innerHTML=(S.code?`<div style="padding:4px 16px 12px;font-family:var(--mono);font-size:12px;color:var(--bad);white-space:pre-wrap">${esc(S.code)}</div>`:'')+
+   S.insns.map(r=>`<div class="ln${r[0]===st.pc?(st.err?' err':' cur'):visited.has(r[0])?' seen':''}"><span class="i">${r[0]}</span><span>${hlB(r[1])}</span></div>`).join('');
+  $('#vregs').innerHTML=RN.map(r=>{const v=state[r];const ch=prev&&prev[r]!==v;return `<span class="rn">${r}</span><span class="rv ty-${ty(v)}${ch?' chg':''}" title="${esc(v)}">${esc(v)}</span>`}).join('');
+  let log=S.steps.slice(0,vs+1).map(x=>{let l=esc(x.log);if(x.err)l=l.split('\n').map((t,i)=>i?`<span class="e">${t}</span>`:t).join('\n');if(x.fin==='ok')l=`<span class="y">${l}</span>`;return l}).join('\n');
+  if(st.fin){log+=`\n<span class="${S.result[0]==='ok'?'g':'e'}">${esc(S.result[1])}\n${esc(S.result[2])}</span>`}
+  const L=$('#vlog');L.innerHTML=log;L.scrollTop=L.scrollHeight;
+  $('#vsay').textContent=st.say;
+  const bd=$('#vbadge');bd.className='badge '+(st.fin?(S.result[0]==='ok'?'ok':'bad'):vs?'run':'');
+  bd.textContent=st.fin?(S.result[0]==='ok'?'accepted':'rejected'):vs?`step ${vs}/${S.steps.length-1}`:'ready';
+  $('#vprev').disabled=vs===0;$('#vnext').disabled=vs===S.steps.length-1;}
+function vStop(){if(vT){clearInterval(vT);vT=null;$('#vplay').textContent='Run'}}
+$('#vtabs').innerHTML=Object.entries(SC).map(([k,v])=>`<button class="chip${k===sc?' on':''}" data-s="${k}">${v.name}</button>`).join('');
+$$('#vtabs button').forEach(b=>b.onclick=()=>{vStop();sc=b.dataset.s;vs=0;$$('#vtabs button').forEach(x=>x.classList.toggle('on',x===b));buildStates();vRender()});
+$('#vnext').onclick=()=>{vStop();if(vs<SC[sc].steps.length-1){vs++;vRender()}};
+$('#vprev').onclick=()=>{vStop();if(vs>0){vs--;vRender()}};
+$('#vreset').onclick=()=>{vStop();vs=0;vRender()};
+$('#vplay').onclick=()=>{if(vT){vStop();return}if(vs>=SC[sc].steps.length-1)vs=0;$('#vplay').textContent='Pause';
+  vT=setInterval(()=>{if(vs>=SC[sc].steps.length-1){vStop();return}vs++;vRender()},1300)};
+buildStates();vRender();
+
+/* ---------- register map ---------- */
+const RM=[['r0','rax','return value, helper result'],['r1','rdi','argument 1 / context pointer'],['r2','rsi','argument 2'],['r3','rdx','argument 3'],['r4','rcx','argument 4'],['r5','r8','argument 5'],['r6','rbx','callee-saved'],['r7','r13','callee-saved'],['r8','r14','callee-saved'],['r9','r15','callee-saved'],['r10','rbp','frame pointer, read-only']];
+$('#rmap').innerHTML=RM.map(r=>`<div class="rmrow"><span class="b">${r[0]}</span><span class="ar">→</span><span class="x">${r[1]}</span><span class="w">${r[2]}</span></div>`).join('');
+
+/* ---------- hooks ---------- */
+const HOOKS={
+ uprobe:{c:'obs',n:'uprobe / USDT',p:'Fires when a user-space function or static tracepoint is hit. Lets you trace applications without changing them, for example reading TLS plaintext at SSL_read in libssl.',ex:'SEC("uprobe//usr/lib/libssl.so.3:SSL_read")\nint BPF_UPROBE(on_read, void *ssl, void *buf, int n)',u:'bpftrace, Pixie, Parca'},
+ tp_sys:{c:'obs',n:'syscall tracepoints',p:'Stable tracepoints on every system call entry and exit. A common starting point for logging process execution or file access.',ex:'SEC("tracepoint/syscalls/sys_enter_execve")\nint on_exec(struct trace_event_raw_sys_enter *ctx)',u:'BCC execsnoop, Falco'},
+ seccomp:{c:'sec',n:'seccomp',p:'Filters which system calls a process may make. Note: seccomp still uses classic BPF (cBPF), the older 32-bit ancestor, not eBPF.',ex:'prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)',u:'Docker, Chrome, systemd'},
+ lsm:{c:'sec',n:'LSM BPF',p:'Attaches to Linux Security Module hooks such as file_open or bprm_check_security. Returning a negative error denies the operation, so you can enforce policy, not just observe it. Needs CONFIG_BPF_LSM.',ex:'SEC("lsm/file_open")\nint BPF_PROG(deny_open, struct file *file)\n{ /* return -EPERM to block */ return 0; }',u:'Tetragon, KubeArmor'},
+ kprobe:{c:'obs',n:'kprobe / fentry',p:'Attach to almost any kernel function. fentry/fexit use BPF trampolines and BTF, so they are faster and give typed access to arguments.',ex:'SEC("fentry/tcp_v4_connect")\nint BPF_PROG(on_connect, struct sock *sk)',u:'bpftrace, BCC tcpconnect'},
+ sched:{c:'obs',n:'sched tracepoints / perf_event',p:'Scheduler events and CPU sampling. Used for run-queue latency histograms and always-on CPU profiling with stack traces.',ex:'SEC("perf_event")\nint profile(struct bpf_perf_event_data *ctx)',u:'Parca, BCC runqlat, profile'},
+ cgroup:{c:'sec',n:'cgroup hooks',p:'Per-container control over sockets and devices: allow or deny connect(), bind(), packet egress, or device access for every process in a cgroup.',ex:'SEC("cgroup/connect4")\nint restrict_connect(struct bpf_sock_addr *ctx)',u:'systemd IPAddressDeny, Cilium'},
+ sock:{c:'net',n:'sockops / sk_msg',p:'Hooks on socket events and messages. Can redirect data straight between local sockets, skipping the TCP/IP stack for same-host traffic.',ex:'SEC("sk_msg")\nint redir(struct sk_msg_md *msg)\n{ return bpf_msg_redirect_hash(msg, &sock_map, &key, 0); }',u:'Cilium socket acceleration'},
+ tc:{c:'net',n:'tc (clsact)',p:'Runs on ingress and egress with a full sk_buff. Can rewrite, redirect or drop packets after the kernel has parsed metadata. Works for outgoing traffic, which XDP cannot see.',ex:'SEC("tc")\nint handle_egress(struct __sk_buff *skb)',u:'Cilium, Calico eBPF'},
+ xdp:{c:'net',n:'XDP',p:'Our example. Runs in the network driver on the raw frame, before any sk_buff allocation. It can return PASS, DROP, TX (bounce back) or REDIRECT. Ideal for DDoS filtering and load balancing at millions of packets per second per core.',ex:'SEC("xdp")\nint count_packets(struct xdp_md *ctx)\n{ ... return XDP_PASS; }',u:'Katran (Meta), Cloudflare DDoS mitigation, Cilium'},
+ xdpoff:{c:'net',n:'XDP offload',p:'On supported SmartNICs, the verified bytecode is compiled for the NIC itself and runs on the card, never touching the host CPU.',ex:'ip link set dev eth0 xdpoffload obj prog.o sec xdp',u:'Netronome Agilio NICs'}
+};
+const LAYERS=[
+ {n:'Applications',s:'processes, libraries',h:['uprobe'],cls:'user'},
+ {sep:'system call boundary'},
+ {n:'System call interface',s:'entry and exit',h:['tp_sys','seccomp']},
+ {n:'Kernel subsystems',s:'VFS, security, scheduler',h:['lsm','kprobe','sched']},
+ {n:'Sockets and cgroups',s:'per-container policy',h:['cgroup','sock']},
+ {n:'Traffic control',s:'sk_buff ingress and egress',h:['tc']},
+ {n:'NIC driver',s:'raw frames, no sk_buff yet',h:['xdp']},
+ {n:'NIC hardware',s:'SmartNIC',h:['xdpoff'],cls:'hw'}
+];
+const CATS={all:'All hooks',obs:'Observability',net:'Networking',sec:'Security'};
+const CATC={obs:'var(--cyan)',net:'var(--honey)',sec:'var(--rose)'};
+$('#hstack').innerHTML=LAYERS.map(l=>l.sep?`<div class="sep">${l.sep}</div>`:
+ `<div class="lyr ${l.cls||''}"><div class="ln2">${l.n}<small>${l.s}</small></div><div class="hk">${l.h.map(k=>`<button class="hookbtn" data-k="${k}" data-c="${HOOKS[k].c}"><span>${HOOKS[k].n}</span></button>`).join('')}</div></div>`).join('');
+$('#hfilt').innerHTML=Object.entries(CATS).map(([k,v])=>`<button class="chip${k==='all'?' on':''}" data-f="${k}">${v}</button>`).join('');
+function showHook(k){const h=HOOKS[k];$$('.hookbtn').forEach(b=>b.classList.toggle('on',b.dataset.k===k));
+ $('#hinfo').innerHTML=`<div class="cat" style="color:${CATC[h.c]}">${CATS[h.c]}</div><h4>${h.n}</h4><p>${h.p}</p><div class="ex">${hlC(h.ex)}</div><p class="used">Used by ${h.u}</p>`}
+$$('.hookbtn').forEach(b=>b.onclick=()=>showHook(b.dataset.k));
+$$('#hfilt button').forEach(b=>b.onclick=()=>{const f=b.dataset.f;$$('#hfilt button').forEach(x=>x.classList.toggle('on',x===b));
+ $$('.hookbtn').forEach(h=>h.classList.toggle('dim',f!=='all'&&h.dataset.c!==f));
+ const first=$$('.hookbtn').find(h=>f==='all'||h.dataset.c===f);if(first&&f!=='all')showHook(first.dataset.k)});
+showHook('xdp');
+
+/* ---------- live sim ---------- */
+const lane=$('#lane'),zx=$('#zxdp');let pk=[],mapv=0,passed=0,dropped=0,action='pass',paused=false,lastUser=0,acc=0,lastT=0;
+function spawn(){const el=document.createElement('div');el.className='pkt';el.style.top=(28+Math.random()*80)+'px';lane.appendChild(el);pk.push({el,x:-20,hit:false,drop:false,vy:0,y:0,o:1})}
+function step(t){const dt=Math.min(.05,(t-(lastT||t))/1000);lastT=t;
+ if(!paused){acc+=dt*+$('#lrate').value;while(acc>=1){spawn();acc-=1}
+  const W=lane.clientWidth,gate=W*.29,end=W+20;
+  pk=pk.filter(p=>{p.x+=dt*W*.32;
+   if(!p.hit&&p.x>=gate){p.hit=true;mapv++;$('#lmap').textContent=mapv.toLocaleString();zx.classList.add('flash');setTimeout(()=>zx.classList.remove('flash'),90);
+     if(action==='drop'){p.drop=true;p.el.classList.add('drop');dropped++;$('#ldrop').textContent='dropped at XDP: '+dropped.toLocaleString()}}
+   if(p.drop){p.vy+=dt*600;p.y+=p.vy*dt;p.o-=dt*2.4;p.x-=dt*W*.25;p.el.style.opacity=Math.max(0,p.o)}
+   p.el.style.transform=`translate(${p.x}px,${p.y}px)`;
+   if(!p.drop&&!p.counted&&p.x>W*.4){p.counted=true;passed++;$('#lpass').textContent=passed.toLocaleString()}
+   if(p.x>end||p.o<=0){p.el.remove();return false}return true})}
+ requestAnimationFrame(step)}
+requestAnimationFrame(step);
+setInterval(()=>{if(paused)return;const d=mapv-lastUser;lastUser=mapv;$('#luser').textContent=mapv.toLocaleString();
+ const le=[mapv&255,mapv>>8&255,mapv>>16&255,mapv>>>24&255].map(v=>v.toString(16).padStart(2,'0')).join(' ');
+ $('#lpps').textContent=`${d} pkt/s   value: ${le} 00 00 00 00`},1000);
+$$('#lact button').forEach(b=>b.onclick=()=>{action=b.dataset.a;$$('#lact button').forEach(x=>x.classList.toggle('on',x===b))});
+$('#lburst').onclick=()=>{let n=0;const t=setInterval(()=>{spawn();if(++n>=40)clearInterval(t)},25)};
+$('#lpause').onclick=()=>{paused=!paused;$('#lpause').textContent=paused?'Resume':'Pause';lastT=0};
+
+/* ---------- nav highlight ---------- */
+const secs=$$('section.s'),navs=$$('nav.top .links a');
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)navs.forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+e.target.id))}),{rootMargin:'-45% 0px -50% 0px'});
+secs.forEach(s=>io.observe(s));
+})();
+</script>
+</body>
+</html>
